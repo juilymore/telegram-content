@@ -27,6 +27,34 @@ function draftKeyboard(draftId) {
   ]);
 }
 
+// Telegram hard-caps messages at 4096 characters — a drafted post plus its
+// citation footer (Google News RSS URLs are long) can exceed that. Split on
+// paragraph breaks and only attach `extra` (e.g. the Approve/Discard
+// keyboard) to the last chunk.
+const TELEGRAM_MAX_LEN = 4000;
+
+function splitMessage(text, maxLen = TELEGRAM_MAX_LEN) {
+  if (text.length <= maxLen) return [text];
+  const chunks = [];
+  let rest = text;
+  while (rest.length > maxLen) {
+    let cut = rest.lastIndexOf('\n', maxLen);
+    if (cut <= 0) cut = maxLen;
+    chunks.push(rest.slice(0, cut));
+    rest = rest.slice(cut).replace(/^\n+/, '');
+  }
+  if (rest) chunks.push(rest);
+  return chunks;
+}
+
+async function sendChunked(ctx, text, extra) {
+  const chunks = splitMessage(text);
+  for (let i = 0; i < chunks.length; i++) {
+    const isLast = i === chunks.length - 1;
+    await ctx.reply(chunks[i], isLast ? extra : undefined);
+  }
+}
+
 function formatRating(rating) {
   return (
     `Rating: ${rating.score}/10 (${rating.tier})\n` +
@@ -77,7 +105,7 @@ async function handleFeedback(ctx, feedbackText) {
       citations: newCitations,
     });
 
-    await ctx.reply(formatDraftMessage(newText, newCitations), draftKeyboard(draft.id));
+    await sendChunked(ctx, formatDraftMessage(newText, newCitations), draftKeyboard(draft.id));
   } catch (err) {
     console.error('Revision failed:', err);
     await ctx.reply('Revision failed — the previous draft is still pending. Try sending your feedback again in a moment.');
@@ -131,7 +159,8 @@ async function handleNewNote(ctx, text) {
     });
     await db.updateNoteStatus(note.id, 'drafted');
     const draft = await db.insertDraft({ noteId: note.id, version: 1, text: draftText, citations });
-    await ctx.reply(`${formatRating(rating)}\n\n${formatDraftMessage(draftText, citations)}`, draftKeyboard(draft.id));
+    await ctx.reply(formatRating(rating));
+    await sendChunked(ctx, formatDraftMessage(draftText, citations), draftKeyboard(draft.id));
   } catch (err) {
     console.error('Draft generation failed:', err);
     await db.updateNoteStatus(note.id, 'error');
