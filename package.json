@@ -1,0 +1,23 @@
+{
+  "name": "meera-content-bot",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Telegram bot that turns Meera Pillai's raw Telegram notes into voice-matched, cited LinkedIn drafts for approval.",
+  "type": "commonjs",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "webhook:set": "node scripts/webhook.js set",
+    "webhook:delete": "node scripts/webhook.js delete",
+    "webhook:info": "node scripts/webhook.js info"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.45.4",
+    "dotenv": "^16.4.5",
+    "rss-parser": "^3.13.0",
+    "telegraf": "^4.16.3"
+  }
+}
