@@ -9,13 +9,28 @@ const bot = new Telegraf(config.TELEGRAM_BOT_TOKEN);
 const FEEDBACK_PREFIX = /^feedback on post draft:\s*(.*)$/is;
 const POSTABLE_THRESHOLD = 7;
 
-// Access control (automation brief, Check 5): this is Meera's personal
-// channel — every handler ignores anyone but this one Telegram user ID.
-function isAllowed(ctx) {
+// Access control (automation brief, Check 5): every handler ignores anyone
+// but Meera — either her own Telegram user ID (private chat, group messages,
+// button taps) or her one allowed channel ID (channel posts, which have no
+// sender identity at all).
+function isAllowedUser(ctx) {
   const senderId = ctx.from && String(ctx.from.id);
   const ok = senderId === String(config.ALLOWED_TELEGRAM_USER_ID);
   if (!ok) {
     console.warn(`Ignored message from unauthorized sender id=${senderId} (expected ${config.ALLOWED_TELEGRAM_USER_ID})`);
+  }
+  return ok;
+}
+
+function isAllowedChannel(ctx) {
+  const chatId = ctx.chat && String(ctx.chat.id);
+  if (!config.ALLOWED_CHANNEL_ID) {
+    console.warn(`Ignored channel post from chat id=${chatId} — set ALLOWED_CHANNEL_ID to this value to enable it.`);
+    return false;
+  }
+  const ok = chatId === String(config.ALLOWED_CHANNEL_ID);
+  if (!ok) {
+    console.warn(`Ignored channel post from unauthorized chat id=${chatId} (expected ${config.ALLOWED_CHANNEL_ID})`);
   }
   return ok;
 }
@@ -113,7 +128,10 @@ async function handleFeedback(ctx, feedbackText) {
 }
 
 async function handleNewNote(ctx, text) {
-  const note = await db.insertNote({ telegramUserId: ctx.from.id, rawText: text });
+  // ctx.from is absent for channel posts (they have no sender identity) —
+  // fall back to the chat id so every note still records who/where it came from.
+  const senderId = ctx.from ? ctx.from.id : ctx.chat.id;
+  const note = await db.insertNote({ telegramUserId: senderId, rawText: text });
 
   let extracted;
   try {
@@ -169,7 +187,7 @@ async function handleNewNote(ctx, text) {
 }
 
 bot.on('text', async (ctx) => {
-  if (!isAllowed(ctx)) return;
+  if (!isAllowedUser(ctx)) return;
 
   const text = ctx.message.text.trim();
   const feedbackMatch = text.match(FEEDBACK_PREFIX);
@@ -182,8 +200,28 @@ bot.on('text', async (ctx) => {
   await handleNewNote(ctx, text);
 });
 
+// A Telegram Channel is a different chat type from a Group — posts arrive as
+// `channel_post`, not `message`, and carry no sender identity, so this is
+// gated by channel id (see isAllowedChannel) rather than user id.
+bot.on('channel_post', async (ctx) => {
+  if (!isAllowedChannel(ctx)) return;
+
+  const post = ctx.channelPost;
+  if (!post.text) return; // ignore non-text channel posts (photos, etc.)
+
+  const text = post.text.trim();
+  const feedbackMatch = text.match(FEEDBACK_PREFIX);
+
+  if (feedbackMatch) {
+    await handleFeedback(ctx, feedbackMatch[1].trim());
+    return;
+  }
+
+  await handleNewNote(ctx, text);
+});
+
 bot.action(/^approve:(\d+)$/, async (ctx) => {
-  if (!isAllowed(ctx)) return ctx.answerCbQuery();
+  if (!isAllowedUser(ctx)) return ctx.answerCbQuery();
   const id = Number(ctx.match[1]);
   await db.setDraftStatus(id, 'approved');
   try {
@@ -196,7 +234,7 @@ bot.action(/^approve:(\d+)$/, async (ctx) => {
 });
 
 bot.action(/^discard:(\d+)$/, async (ctx) => {
-  if (!isAllowed(ctx)) return ctx.answerCbQuery();
+  if (!isAllowedUser(ctx)) return ctx.answerCbQuery();
   const id = Number(ctx.match[1]);
   await db.setDraftStatus(id, 'discarded');
   try {

@@ -15,6 +15,12 @@ module.exports = {
   TELEGRAM_BOT_TOKEN: required('TELEGRAM_BOT_TOKEN'),
   ALLOWED_TELEGRAM_USER_ID: required('ALLOWED_TELEGRAM_USER_ID'),
 
+  // Optional: if set, the bot also accepts posts from this one Telegram
+  // channel (the bot must be an admin there). Channel posts have no sender
+  // identity, so this is gated by chat id instead of user id. Leave unset to
+  // only use the private 1:1 chat.
+  ALLOWED_CHANNEL_ID: process.env.ALLOWED_CHANNEL_ID || '',
+
   // One Gemini key powers everything: the gatekeeper check, drafting/revision,
   // and the Google Search grounding used for news enrichment.
   GEMINI_API_KEY: required('GEMINI_API_KEY'),
