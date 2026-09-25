@@ -8,10 +8,6 @@ const bot = new Telegraf(config.TELEGRAM_BOT_TOKEN);
 
 const FEEDBACK_PREFIX = /^feedback on post draft:\s*(.*)$/is;
 const POSTABLE_THRESHOLD = 7;
-// Below this, the note isn't just "underdeveloped" — it's not skincare/
-// formulation content at all (a stray message, a typo, an off-topic note).
-// Worth a different, lighter tone than the formal backlog + breakdown.
-const OFF_TOPIC_THRESHOLD = 2;
 
 // Access control (automation brief, Check 5): every handler ignores anyone
 // but Meera — either her own Telegram user ID (private chat, group messages,
@@ -174,17 +170,11 @@ async function handleNewNote(ctx, text) {
   await db.setNoteAngle(note.id, extracted.angle);
   await db.setNoteRating(note.id, rating);
 
-  if (rating.score <= OFF_TOPIC_THRESHOLD) {
-    await db.updateNoteStatus(note.id, 'backlog');
-    await ctx.reply(
-      `Oops — that doesn't read like skincare/formulation content (rated ${rating.score}/10). Did you mean to send this, or was it a mistype? Resend with a real note if so.`
-    );
-    return;
-  }
-
   if (rating.score < POSTABLE_THRESHOLD) {
     await db.updateNoteStatus(note.id, 'backlog');
-    await ctx.reply(`Note logged to backlog (needs ${POSTABLE_THRESHOLD}+ to be postable).\n\n${formatRating(rating)}`);
+    await ctx.reply(
+      `Noted. Good raw material, but can't make a post out of it yet (rated ${rating.score}/10) — can revisit later if needed.\n\n${formatRating(rating)}`
+    );
     return;
   }
 
