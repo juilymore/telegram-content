@@ -1,10 +1,11 @@
 const config = require('./config');
 const { getVoiceGuide, getCoreBeliefs } = require('./voice');
+const { fetchWithRetry } = require('./fetchWithRetry');
 
 async function callGemini({ systemInstruction, userText }) {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${config.GEMINI_MODEL}:generateContent?key=${config.GEMINI_API_KEY}`;
 
-  const res = await fetch(url, {
+  const res = await fetchWithRetry(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({

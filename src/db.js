@@ -1,11 +1,14 @@
 const { createClient } = require('@supabase/supabase-js');
 const config = require('./config');
+const { fetchWithRetry } = require('./fetchWithRetry');
 
 // Supabase (Postgres over REST) instead of a local file — this needs to
 // survive Vercel serverless cold starts, which local SQLite cannot.
 // Table names are prefixed (meera_*) so this can share a Supabase project
 // with other coursework without colliding.
-const supabase = createClient(config.SUPABASE_URL, config.SUPABASE_SERVICE_ROLE_KEY);
+const supabase = createClient(config.SUPABASE_URL, config.SUPABASE_SERVICE_ROLE_KEY, {
+  global: { fetch: fetchWithRetry },
+});
 
 async function insertNote({ telegramUserId, rawText }) {
   const { data, error } = await supabase
