@@ -22,6 +22,7 @@ create table if not exists meera_drafts (
   text text not null,
   citations_json text not null default '[]',
   status text not null default 'pending', -- pending | approved | discarded | superseded
+  discard_reason text,       -- "Didn't like draft" | "Not relevant to post now" (set on discard)
   created_at timestamptz not null default now()
 );
 

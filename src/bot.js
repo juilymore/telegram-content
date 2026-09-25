@@ -8,6 +8,10 @@ const bot = new Telegraf(config.TELEGRAM_BOT_TOKEN);
 
 const FEEDBACK_PREFIX = /^feedback on post draft:\s*(.*)$/is;
 const POSTABLE_THRESHOLD = 7;
+// Below this, the note isn't just "underdeveloped" — it's not skincare/
+// formulation content at all (a stray message, a typo, an off-topic note).
+// Worth a different, lighter tone than the formal backlog + breakdown.
+const OFF_TOPIC_THRESHOLD = 2;
 
 // Access control (automation brief, Check 5): every handler ignores anyone
 // but Meera — either her own Telegram user ID (private chat, group messages,
@@ -39,6 +43,13 @@ function draftKeyboard(draftId) {
   return Markup.inlineKeyboard([
     Markup.button.callback('Approve', `approve:${draftId}`),
     Markup.button.callback('Discard', `discard:${draftId}`),
+  ]);
+}
+
+function discardReasonKeyboard(draftId) {
+  return Markup.inlineKeyboard([
+    Markup.button.callback("Didn't like the draft", `discardreason:${draftId}:draft`),
+    Markup.button.callback('Not relevant right now', `discardreason:${draftId}:relevance`),
   ]);
 }
 
@@ -163,6 +174,14 @@ async function handleNewNote(ctx, text) {
   await db.setNoteAngle(note.id, extracted.angle);
   await db.setNoteRating(note.id, rating);
 
+  if (rating.score <= OFF_TOPIC_THRESHOLD) {
+    await db.updateNoteStatus(note.id, 'backlog');
+    await ctx.reply(
+      `Oops — that doesn't read like skincare/formulation content (rated ${rating.score}/10). Did you mean to send this, or was it a mistype? Resend with a real note if so.`
+    );
+    return;
+  }
+
   if (rating.score < POSTABLE_THRESHOLD) {
     await db.updateNoteStatus(note.id, 'backlog');
     await ctx.reply(`Note logged to backlog (needs ${POSTABLE_THRESHOLD}+ to be postable).\n\n${formatRating(rating)}`);
@@ -230,7 +249,10 @@ bot.action(/^approve:(\d+)$/, async (ctx) => {
     // message may already be edited/too old — non-fatal
   }
   await ctx.answerCbQuery('Marked approved');
-  await ctx.reply('Approved in the tracker. This does not post to LinkedIn for you — verify every cited fact yourself, then publish it.');
+  // Keeps "the Cut" from the automation brief (verify cited facts before
+  // publishing) but in Meera's own encouraging, direct tone rather than a
+  // compliance-style warning.
+  await ctx.reply('Great — you can go ahead and post this on LinkedIn! Just double-check any cited facts first.');
 });
 
 bot.action(/^discard:(\d+)$/, async (ctx) => {
@@ -243,7 +265,21 @@ bot.action(/^discard:(\d+)$/, async (ctx) => {
     // non-fatal
   }
   await ctx.answerCbQuery('Discarded');
-  await ctx.reply('Archived.');
+  await ctx.reply("Noted! Can you tell me why this wasn't post-worthy?", discardReasonKeyboard(id));
+});
+
+bot.action(/^discardreason:(\d+):(draft|relevance)$/, async (ctx) => {
+  if (!isAllowedUser(ctx)) return ctx.answerCbQuery();
+  const id = Number(ctx.match[1]);
+  const reason = ctx.match[2] === 'draft' ? "Didn't like draft" : 'Not relevant to post now';
+  await db.setDraftDiscardReason(id, reason);
+  try {
+    await ctx.editMessageReplyMarkup(undefined);
+  } catch {
+    // non-fatal
+  }
+  await ctx.answerCbQuery('Thanks');
+  await ctx.reply('Thanks, noted.');
 });
 
 module.exports = bot;

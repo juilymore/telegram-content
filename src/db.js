@@ -83,6 +83,11 @@ async function supersedeDraft(id) {
   await setDraftStatus(id, 'superseded');
 }
 
+async function setDraftDiscardReason(id, reason) {
+  const { error } = await supabase.from('meera_drafts').update({ discard_reason: reason }).eq('id', id);
+  if (error) throw error;
+}
+
 module.exports = {
   insertNote,
   getNoteById,
@@ -94,4 +99,5 @@ module.exports = {
   getLatestPendingDraft,
   setDraftStatus,
   supersedeDraft,
+  setDraftDiscardReason,
 };
