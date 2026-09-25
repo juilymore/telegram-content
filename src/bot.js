@@ -239,10 +239,21 @@ bot.action(/^approve:(\d+)$/, async (ctx) => {
     // message may already be edited/too old — non-fatal
   }
   await ctx.answerCbQuery('Marked approved');
+
   // Keeps "the Cut" from the automation brief (verify cited facts before
   // publishing) but in Meera's own encouraging, direct tone rather than a
-  // compliance-style warning.
-  await ctx.reply('Great — you can go ahead and post this on LinkedIn! Just double-check any cited facts first.');
+  // compliance-style warning. Re-shows the actual links here so she doesn't
+  // have to scroll back up to the original draft message to find them.
+  const draft = await db.getDraftById(id);
+  const citations = JSON.parse(draft?.citations_json || '[]');
+  let confirmation = 'Great — you can go ahead and post this on LinkedIn!';
+  if (citations.length > 0) {
+    const lines = citations.map((c) => `${c.n}. ${c.title} — ${c.url}`).join('\n');
+    confirmation += ` Just double-check these cited facts first:\n\n${lines}`;
+  } else {
+    confirmation += ' No external sources were cited in this one, so nothing to double-check there.';
+  }
+  await sendChunked(ctx, confirmation);
 });
 
 bot.action(/^discard:(\d+)$/, async (ctx) => {
