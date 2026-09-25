@@ -77,6 +77,22 @@ async function sendChunked(ctx, text, extra) {
   }
 }
 
+// Telegraf aborts an update entirely after 90s with no way to recover a
+// reply at that point. Bound every individual network call well below that,
+// so a single stalled Supabase/Telegram request can't silently swallow a
+// button-tap confirmation — it fails fast enough that the catch-all below
+// still gets a chance to tell the user something broke.
+const ACTION_STEP_TIMEOUT_MS = 12000;
+
+function withTimeout(promise, label) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) =>
+      setTimeout(() => reject(new Error(`Timed out after ${ACTION_STEP_TIMEOUT_MS}ms: ${label}`)), ACTION_STEP_TIMEOUT_MS)
+    ),
+  ]);
+}
+
 function formatRating(rating) {
   return (
     `Rating: ${rating.score}/10 (${rating.tier})\n` +
@@ -232,55 +248,110 @@ bot.on('channel_post', async (ctx) => {
 bot.action(/^approve:(\d+)$/, async (ctx) => {
   if (!isAllowedUser(ctx)) return ctx.answerCbQuery();
   const id = Number(ctx.match[1]);
-  await db.setDraftStatus(id, 'approved');
-  try {
-    await ctx.editMessageReplyMarkup(undefined);
-  } catch {
-    // message may already be edited/too old — non-fatal
-  }
-  await ctx.answerCbQuery('Marked approved');
 
-  // Keeps "the Cut" from the automation brief (verify cited facts before
-  // publishing) but in Meera's own encouraging, direct tone rather than a
-  // compliance-style warning. Re-shows the actual links here so she doesn't
-  // have to scroll back up to the original draft message to find them.
-  const draft = await db.getDraftById(id);
-  const citations = JSON.parse(draft?.citations_json || '[]');
-  let confirmation = 'Great — you can go ahead and post this on LinkedIn!';
-  if (citations.length > 0) {
-    const lines = citations.map((c) => `${c.n}. ${c.title} — ${c.url}`).join('\n');
-    confirmation += ` Just double-check these cited facts first:\n\n${lines}`;
-  } else {
-    confirmation += ' No external sources were cited in this one, so nothing to double-check there.';
+  // Answer the tap immediately — Telegram's own loading spinner shouldn't
+  // wait on any of our downstream calls.
+  try {
+    await withTimeout(ctx.answerCbQuery('Marked approved'), 'answerCbQuery (approve)');
+  } catch (err) {
+    console.error('answerCbQuery failed (approve):', err);
   }
-  await sendChunked(ctx, confirmation);
+
+  try {
+    await withTimeout(db.setDraftStatus(id, 'approved'), 'setDraftStatus (approved)');
+
+    try {
+      await withTimeout(ctx.editMessageReplyMarkup(undefined), 'editMessageReplyMarkup (approve)');
+    } catch (err) {
+      console.error('editMessageReplyMarkup failed (approve, non-fatal):', err);
+    }
+
+    // Keeps "the Cut" from the automation brief (verify cited facts before
+    // publishing) but in Meera's own encouraging, direct tone rather than a
+    // compliance-style warning. Re-shows the actual links here so she doesn't
+    // have to scroll back up to the original draft message to find them.
+    const draft = await withTimeout(db.getDraftById(id), 'getDraftById (approve)');
+    const citations = JSON.parse(draft?.citations_json || '[]');
+    let confirmation = 'Great — you can go ahead and post this on LinkedIn!';
+    if (citations.length > 0) {
+      const lines = citations.map((c) => `${c.n}. ${c.title} — ${c.url}`).join('\n');
+      confirmation += ` Just double-check these cited facts first:\n\n${lines}`;
+    } else {
+      confirmation += ' No external sources were cited in this one, so nothing to double-check there.';
+    }
+    await withTimeout(sendChunked(ctx, confirmation), 'sendChunked (approve)');
+  } catch (err) {
+    console.error('Approve handling failed:', err);
+    try {
+      await ctx.reply('Marked approved, but something broke sending this confirmation. Check the tracker directly if unsure.');
+    } catch (replyErr) {
+      console.error('Fallback reply also failed (approve):', replyErr);
+    }
+  }
 });
 
 bot.action(/^discard:(\d+)$/, async (ctx) => {
   if (!isAllowedUser(ctx)) return ctx.answerCbQuery();
   const id = Number(ctx.match[1]);
-  await db.setDraftStatus(id, 'discarded');
+
   try {
-    await ctx.editMessageReplyMarkup(undefined);
-  } catch {
-    // non-fatal
+    await withTimeout(ctx.answerCbQuery('Discarded'), 'answerCbQuery (discard)');
+  } catch (err) {
+    console.error('answerCbQuery failed (discard):', err);
   }
-  await ctx.answerCbQuery('Discarded');
-  await ctx.reply("Noted! Can you tell me why this wasn't post-worthy?", discardReasonKeyboard(id));
+
+  try {
+    await withTimeout(db.setDraftStatus(id, 'discarded'), 'setDraftStatus (discarded)');
+
+    try {
+      await withTimeout(ctx.editMessageReplyMarkup(undefined), 'editMessageReplyMarkup (discard)');
+    } catch (err) {
+      console.error('editMessageReplyMarkup failed (discard, non-fatal):', err);
+    }
+
+    await withTimeout(
+      ctx.reply("Noted! Can you tell me why this wasn't post-worthy?", discardReasonKeyboard(id)),
+      'reply (discard)'
+    );
+  } catch (err) {
+    console.error('Discard handling failed:', err);
+    try {
+      await ctx.reply('Marked discarded, but something broke asking why. No worries either way.');
+    } catch (replyErr) {
+      console.error('Fallback reply also failed (discard):', replyErr);
+    }
+  }
 });
 
 bot.action(/^discardreason:(\d+):(draft|relevance)$/, async (ctx) => {
   if (!isAllowedUser(ctx)) return ctx.answerCbQuery();
   const id = Number(ctx.match[1]);
   const reason = ctx.match[2] === 'draft' ? "Didn't like draft" : 'Not relevant to post now';
-  await db.setDraftDiscardReason(id, reason);
+
   try {
-    await ctx.editMessageReplyMarkup(undefined);
-  } catch {
-    // non-fatal
+    await withTimeout(ctx.answerCbQuery('Thanks'), 'answerCbQuery (discardreason)');
+  } catch (err) {
+    console.error('answerCbQuery failed (discardreason):', err);
   }
-  await ctx.answerCbQuery('Thanks');
-  await ctx.reply('Thanks, noted.');
+
+  try {
+    await withTimeout(db.setDraftDiscardReason(id, reason), 'setDraftDiscardReason');
+
+    try {
+      await withTimeout(ctx.editMessageReplyMarkup(undefined), 'editMessageReplyMarkup (discardreason)');
+    } catch (err) {
+      console.error('editMessageReplyMarkup failed (discardreason, non-fatal):', err);
+    }
+
+    await withTimeout(ctx.reply('Thanks, noted.'), 'reply (discardreason)');
+  } catch (err) {
+    console.error('Discard-reason handling failed:', err);
+    try {
+      await ctx.reply('Got it, though something broke saving the reason.');
+    } catch (replyErr) {
+      console.error('Fallback reply also failed (discardreason):', replyErr);
+    }
+  }
 });
 
 module.exports = bot;
