@@ -82,7 +82,11 @@ async function sendChunked(ctx, text, extra) {
 // so a single stalled Supabase/Telegram request can't silently swallow a
 // button-tap confirmation — it fails fast enough that the catch-all below
 // still gets a chance to tell the user something broke.
-const ACTION_STEP_TIMEOUT_MS = 12000;
+//
+// 20s (not lower) because Supabase's free-tier database can go idle and
+// take several seconds to wake up on the first query after inactivity —
+// too short a timeout treats a normal cold-start as a failure.
+const ACTION_STEP_TIMEOUT_MS = 20000;
 
 function withTimeout(promise, label) {
   return Promise.race([
